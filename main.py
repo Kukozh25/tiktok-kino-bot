@@ -17,12 +17,20 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 def get_movies_from_sheet():
-    url = f"https://google.com{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv"
+    # Железобетонный формат экспорта первого листа
+    url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid=0"
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
         response = requests.get(url, headers=headers, timeout=10)
         response.encoding = 'utf-8'
-        lines = response.text.splitlines()
+        
+        # Очищаем текст от возможных мусорных символов Google
+        clean_text = response.text.strip().replace('\ufeff', '')
+        lines = clean_text.splitlines()
+        
+        # Фильтруем полностью пустые строки
+        lines = [line for line in lines if line.strip()]
+        
         reader = csv.DictReader(lines)
         return list(reader)
     except Exception as e:
@@ -31,7 +39,6 @@ def get_movies_from_sheet():
 
 def format_rating(rating_str):
     try:
-        # Округляем рейтинг до 1 знака после запятой
         return f"{float(rating_str):.1f}"
     except:
         return rating_str if rating_str else "-"
@@ -54,15 +61,13 @@ async def process_callback_random(callback_query: types.CallbackQuery):
     movies = get_movies_from_sheet()
     
     if not movies:
-        await bot.send_message(callback_query.from_user.id, "❌ Не удалось подключиться к базе данных. Проверьте настройки доступа таблицы.")
+        await bot.send_message(callback_query.from_user.id, "❌ База данных временно недоступна. Попробуйте позже.")
         return
         
     movie = random.choice(movies)
-    
-    # Берем ссылку. Если она пустая — пишем стандартный текст со ссылкой на канал
-    link = movie.get('link to post', '').strip()
+    link = movie.get('link to post', '').strip() if movie.get('link to post') else ""
     if not link:
-        link = "Ссылка на фильм появится скоро в нашем канале! Подписывайся: https://t.me"
+        link = "Ссылка скоро появится в нашем канале!"
         
     rating = format_rating(movie.get('rating_ball', '-'))
     
@@ -76,25 +81,29 @@ async def process_callback_random(callback_query: types.CallbackQuery):
     )
     await bot.send_message(callback_query.from_user.id, text, parse_mode="Markdown")
 
-@dp.message(lambda message: message.text and message.text.strip().isdigit())
+@dp.message()
 async def search_by_code(message: types.Message):
     user_code = message.text.strip()
+    if not user_code.isdigit():
+        return
+
     movies = get_movies_from_sheet()
-    
     if not movies:
         await message.reply("❌ База данных временно недоступна.")
         return
 
     found_movie = None
     for movie in movies:
-        if movie.get('code from tt', '').strip() == user_code:
+        # Сравниваем коды, очищая их от случайных пробелов
+        sheet_code = movie.get('code from tt', '').strip() if movie.get('code from tt') else ""
+        if sheet_code == user_code:
             found_movie = movie
             break
             
     if found_movie:
-        link = found_movie.get('link to post', '').strip()
+        link = found_movie.get('link to post', '').strip() if found_movie.get('link to post') else ""
         if not link:
-            link = "Ссылка на фильм появится скоро в нашем канале! Подписывайся: https://t.me"
+            link = "Ссылка скоро появится в нашем канале!"
             
         rating = format_rating(found_movie.get('rating_ball', '-'))
         
@@ -109,7 +118,7 @@ async def search_by_code(message: types.Message):
         )
         await message.reply(text, parse_mode="Markdown")
     else:
-        await message.reply("😔 Фильм с таким кодом не найден. Возможно, админ ещё не добавил этот код в таблицу. Проверь цифры!")
+        await message.reply("😔 Фильм с таким кодом не найден. Проверь цифры!")
 
 async def handle_hc(request):
     return web.Response(text="Bot is running")
