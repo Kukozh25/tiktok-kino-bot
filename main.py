@@ -9,7 +9,6 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiohttp import web
 
-# Ключи из настроек Render
 API_TOKEN = os.getenv("BOT_TOKEN")
 GOOGLE_SHEET_ID = os.getenv("SHEET_ID")
 
@@ -18,9 +17,10 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 def get_movies_from_sheet():
-    url = f"https://google.com{GOOGLE_SHEET_ID}/export?format=csv"
+    url = f"https://google.com{GOOGLE_SHEET_ID}/gviz/tq?tqx=out:csv"
     try:
-        response = requests.get(url)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get(url, headers=headers, timeout=10)
         response.encoding = 'utf-8'
         lines = response.text.splitlines()
         reader = csv.DictReader(lines)
@@ -28,6 +28,13 @@ def get_movies_from_sheet():
     except Exception as e:
         logging.error(f"Ошибка чтения таблицы: {e}")
         return []
+
+def format_rating(rating_str):
+    try:
+        # Округляем рейтинг до 1 знака после запятой
+        return f"{float(rating_str):.1f}"
+    except:
+        return rating_str if rating_str else "-"
 
 @dp.message(Command("start"))
 async def send_welcome(message: types.Message):
@@ -51,12 +58,21 @@ async def process_callback_random(callback_query: types.CallbackQuery):
         return
         
     movie = random.choice(movies)
+    
+    # Берем ссылку. Если она пустая — пишем стандартный текст со ссылкой на канал
+    link = movie.get('link to post', '').strip()
+    if not link:
+        link = "Ссылка на фильм появится скоро в нашем канале! Подписывайся: https://t.me"
+        
+    rating = format_rating(movie.get('rating_ball', '-'))
+    
     text = (
-        f"🎬 **Фильм на вечер:** {movie.get('Название', 'Без названия')}\n"
-        f"🎭 **Жанр:** {movie.get('Жанр', '-')}\n\n"
-        f"📝 **Описание:** {movie.get('Описание', '-')}\n\n"
-        f"🍿 *Полный фильм смотри в нашем официальном канале по ссылке:*\n"
-        f"👉 {movie.get('Ссылка', 'Ссылка скоро появится')}"
+        f"🎬 **Фильм на вечер:** {movie.get('movie', 'Без названия')}\n"
+        f"📅 **Год выпуска:** {movie.get('year', '-')}\n"
+        f"⭐️ **Рейтинг:** {rating}\n\n"
+        f"📝 **Описание:** {movie.get('overview', '-')}\n\n"
+        f"🍿 *Смотреть фильм по ссылке:*\n"
+        f"👉 {link}"
     )
     await bot.send_message(callback_query.from_user.id, text, parse_mode="Markdown")
 
@@ -71,29 +87,34 @@ async def search_by_code(message: types.Message):
 
     found_movie = None
     for movie in movies:
-        if movie.get('Код', '').strip() == user_code:
+        if movie.get('code from tt', '').strip() == user_code:
             found_movie = movie
             break
             
     if found_movie:
+        link = found_movie.get('link to post', '').strip()
+        if not link:
+            link = "Ссылка на фильм появится скоро в нашем канале! Подписывайся: https://t.me"
+            
+        rating = format_rating(found_movie.get('rating_ball', '-'))
+        
         text = (
             f"🎬 **Найден фильм по коду {user_code}:**\n\n"
-            f"🍿 **Название:** {found_movie.get('Название', 'Без названия')}\n"
-            f"🎭 **Жанр:** {found_movie.get('Жанр', '-')}\n\n"
-            f"📝 **Описание:** {found_movie.get('Описание', '-')}\n\n"
-            f"🍿 *Полный фильм смотри в нашем официальном канале по ссылке:*\n"
-            f"👉 {found_movie.get('Ссылка', 'Ссылка скоро появится')}"
+            f"🍿 **Название:** {found_movie.get('movie', 'Без названия')}\n"
+            f"📅 **Год выпуска:** {found_movie.get('year', '-')}\n"
+            f"⭐️ **Рейтинг:** {rating}\n\n"
+            f"📝 **Описание:** {found_movie.get('overview', '-')}\n\n"
+            f"🍿 *Смотреть фильм по ссылке:*\n"
+            f"👉 {link}"
         )
         await message.reply(text, parse_mode="Markdown")
     else:
-        await message.reply("😔 Фильм с таким кодом не найден. Проверь цифры и попробуй ещё раз!")
+        await message.reply("😔 Фильм с таким кодом не найден. Возможно, админ ещё не добавил этот код в таблицу. Проверь цифры!")
 
-# Заглушка для Render, чтобы он думал, что это сайт
 async def handle_hc(request):
     return web.Response(text="Bot is running")
 
 async def main():
-    # Запуск заглушки порта
     app = web.Application()
     app.router.add_get('/', handle_hc)
     runner = web.AppRunner(app)
@@ -102,7 +123,6 @@ async def main():
     site = web.TCPSite(runner, '0.0.0.0', port)
     asyncio.create_task(site.start())
     
-    # Запуск самого бота
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
