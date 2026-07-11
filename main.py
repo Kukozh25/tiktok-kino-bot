@@ -3,19 +3,21 @@ import logging
 import random
 import requests
 import csv
+import asyncio
 from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
+from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-# Скрипт автоматически заберет ключи из скрытых настроек Render
+# Скрипт забирает ключи из настроек Render
 API_TOKEN = os.getenv("BOT_TOKEN")
 GOOGLE_SHEET_ID = os.getenv("SHEET_ID")
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher()
 
 def get_movies_from_sheet():
-    url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv"
+    url = f"https://google.com{GOOGLE_SHEET_ID}/export?format=csv"
     try:
         response = requests.get(url)
         response.encoding = 'utf-8'
@@ -26,22 +28,21 @@ def get_movies_from_sheet():
         logging.error(f"Ошибка чтения таблицы: {e}")
         return []
 
-@dp.message_handler(commands=['start'])
+@dp.message(Command("start"))
 async def send_welcome(message: types.Message):
-    markup = types.InlineKeyboardMarkup()
-    btn_random = types.InlineKeyboardButton("🎲 Случайный фильм", callback_data="get_random")
-    markup.add(btn_random)
+    builder = InlineKeyboardBuilder()
+    builder.row(types.InlineKeyboardButton(text="🎲 Случайный фильм", callback_data="get_random"))
     
     await message.reply(
         "Привет! 🍿 Добро пожаловать в кино-бота.\n\n"
         "Пришли мне **КОД фильма** из TikTok или нажми на кнопку ниже, чтобы выбрать случайное кино на вечер!👇",
-        reply_markup=markup,
+        reply_markup=builder.as_markup(),
         parse_mode="Markdown"
     )
 
-@dp.callback_query_handler(lambda c: c.data == 'get_random')
+@dp.callback_query(lambda c: c.data == 'get_random')
 async def process_callback_random(callback_query: types.CallbackQuery):
-    await bot.answer_callback_query(callback_query.id)
+    await callback_query.answer()
     movies = get_movies_from_sheet()
     
     if not movies:
@@ -58,13 +59,13 @@ async def process_callback_random(callback_query: types.CallbackQuery):
     )
     await bot.send_message(callback_query.from_user.id, text, parse_mode="Markdown")
 
-@dp.message_handler()
+@dp.message()
 async def search_by_code(message: types.Message):
     user_code = message.text.strip()
     movies = get_movies_from_sheet()
     
     if not movies:
-        await bot.reply_to(message, "❌ База данных временно недоступна.")
+        await message.reply("❌ База данных временно недоступна.")
         return
 
     found_movie = None
@@ -86,5 +87,8 @@ async def search_by_code(message: types.Message):
     else:
         await message.reply("😔 Фильм с таким кодом не найден. Проверь цифры и попробуй ещё раз!")
 
+async def main():
+    await dp.start_polling(bot)
+
 if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+    asyncio.run(main())
