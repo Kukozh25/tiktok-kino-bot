@@ -7,8 +7,9 @@ import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiohttp import web
 
-# Скрипт забирает ключи из настроек Render
+# Ключи из настроек Render
 API_TOKEN = os.getenv("BOT_TOKEN")
 GOOGLE_SHEET_ID = os.getenv("SHEET_ID")
 
@@ -59,7 +60,7 @@ async def process_callback_random(callback_query: types.CallbackQuery):
     )
     await bot.send_message(callback_query.from_user.id, text, parse_mode="Markdown")
 
-@dp.message()
+@dp.message(lambda message: message.text and message.text.strip().isdigit())
 async def search_by_code(message: types.Message):
     user_code = message.text.strip()
     movies = get_movies_from_sheet()
@@ -87,8 +88,23 @@ async def search_by_code(message: types.Message):
     else:
         await message.reply("😔 Фильм с таким кодом не найден. Проверь цифры и попробуй ещё раз!")
 
+# Заглушка для Render, чтобы он думал, что это сайт
+async def handle_hc(request):
+    return web.Response(text="Bot is running")
+
 async def main():
+    # Запуск заглушки порта
+    app = web.Application()
+    app.router.add_get('/', handle_hc)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 10000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    asyncio.create_task(site.start())
+    
+    # Запуск самого бота
     await dp.start_polling(bot)
 
 if __name__ == '__main__':
     asyncio.run(main())
+
