@@ -5,7 +5,6 @@ import requests
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils.executor import start_webhook
 
-# Получаем переменные окружения
 API_TOKEN = os.getenv("BOT_TOKEN")
 SCRIPT_URL = os.getenv("SCRIPT_URL")
 
@@ -82,8 +81,11 @@ async def search_by_code(message: types.Message):
     for movie in movies:
         raw_code = str(movie.get('code from tt', '')).strip()
         
-        # Безопасно получаем чистый код без точки (.0) от Google Таблиц
-        sheet_code = raw_code.split('.')[0] if '.' in raw_code else raw_code
+        # Исправлено: корректно отсекаем .0 от гугл таблиц без создания багов
+        if '.' in raw_code:
+            sheet_code = raw_code.split('.')[0]
+        else:
+            sheet_code = raw_code
         
         if sheet_code == user_code:
             found_movie = movie
@@ -128,7 +130,7 @@ if __name__ == '__main__':
         webhook_path='/webhook',
         on_startup=on_startup,
         on_shutdown=on_shutdown,
-        host='0.0.0.0',          # Слушаем все входящие порты Render
+        host='0.0.0.0',
         port=port,
-        skip_updates=True        # Очищаем старые сообщения во избежание конфликтов копий
+        skip_updates=True
     )
