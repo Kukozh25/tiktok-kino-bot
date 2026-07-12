@@ -2,12 +2,8 @@ import os
 import logging
 import random
 import requests
-import asyncio
 from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.webhook.aiohttp_impl import SimpleRequestHandler
-from aiohttp import web
+from aiogram.utils.executor import start_webhook
 
 # Получаем переменные окружения
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -15,11 +11,10 @@ SCRIPT_URL = os.getenv("SCRIPT_URL")
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot)
 
 def get_movies_from_sheet():
     try:
-        # Запрашиваем данные у официального скрипта Google
         response = requests.get(SCRIPT_URL, timeout=10)
         if response.status_code == 200:
             return response.json()
@@ -34,19 +29,19 @@ def format_rating(rating_val):
     except:
         return str(rating_val) if rating_val else "-"
 
-@dp.message(Command("start"))
+@dp.message_handler(commands=["start"])
 async def send_welcome(message: types.Message):
-    builder = InlineKeyboardBuilder()
-    builder.row(types.InlineKeyboardButton(text="🎲 Случайный фильм", callback_data="get_random"))
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton(text="🎲 Случайный фильм", callback_data="get_random"))
     
     await message.reply(
         "Привет! 🍿 Добро пожаловать в кино-бота.\n\n"
         "Пришли мне **КОД фильма** из TikTok или нажми на кнопку ниже, чтобы выбрать случайное кино на вечер!👇",
-        reply_markup=builder.as_markup(),
+        reply_markup=markup,
         parse_mode="Markdown"
     )
 
-@dp.callback_query(lambda c: c.data == 'get_random')
+@dp.callback_query_handler(lambda c: c.data == 'get_random')
 async def process_callback_random(callback_query: types.CallbackQuery):
     await callback_query.answer()
     movies = get_movies_from_sheet()
@@ -72,7 +67,7 @@ async def process_callback_random(callback_query: types.CallbackQuery):
     )
     await bot.send_message(callback_query.from_user.id, text, parse_mode="Markdown")
 
-@dp.message()
+@dp.message_handler()
 async def search_by_code(message: types.Message):
     user_code = message.text.strip()
     if not user_code.isdigit():
@@ -112,32 +107,27 @@ async def search_by_code(message: types.Message):
     else:
         await message.reply("😔 Фильм с таким кодом не найден. Проверь цифры!")
 
-# Функция автоматической установки вебхука в Telegram при старте Render
-async def on_startup(bot: Bot) -> None:
+# Действия при запуске: принудительно очищаем старый вебхук и ставим новый
+async def on_startup(dispatcher):
     RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
     if RENDER_URL:
+        await bot.delete_webhook()  # Сброс старого соединения
         await bot.set_webhook(f"{RENDER_URL}/webhook")
         logging.info(f"Вебхук успешно установлен на: {RENDER_URL}/webhook")
     else:
-        logging.error("Переменная RENDER_EXTERNAL_URL не найдена. Проверьте настройки Render!")
+        logging.error("Переменная RENDER_EXTERNAL_URL не найдена.")
 
-def main():
-    dp.startup.register(on_startup)
-    
-    app = web.Application()
-    
-    # Страница проверки доступности сервиса (Health Check)
-    app.router.add_get('/', lambda r: web.Response(text="Bot is running smoothly on Webhooks!"))
-    
-    # Регистрация обработчика входящих запросов от Telegram
-    webhook_requests_handler = SimpleRequestHandler(
-        dispatcher=dp,
-        bot=bot
-    )
-    webhook_requests_handler.register(app, path="/webhook")
-    
-    port = int(os.getenv("PORT", 10000))
-    web.run_app(app, host="0.0.0.0", port=port)
+async def on_shutdown(dispatcher):
+    await bot.delete_webhook()
 
 if __name__ == '__main__':
-    main()
+    port = int(os.getenv("PORT", 10000))
+    start_webhook(
+        dispatcher=dp,
+        webhook_path='/webhook',
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        host='0.0.0.0',          # Слушаем все интерфейсы для Render
+        port=port,
+        skip_updates=True        # Очищает очередь сообщений, накопленных во время деплоя
+    )
