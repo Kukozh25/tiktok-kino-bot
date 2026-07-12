@@ -6,8 +6,10 @@ import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.webhook.aiohttp_impl import SimpleRequestHandler
 from aiohttp import web
 
+# Получаем переменные окружения
 API_TOKEN = os.getenv("BOT_TOKEN")
 SCRIPT_URL = os.getenv("SCRIPT_URL")
 
@@ -83,7 +85,6 @@ async def search_by_code(message: types.Message):
 
     found_movie = None
     for movie in movies:
-        # Безопасно преобразуем код из таблицы в текст и очищаем от возможных точек (.0) от Google
         raw_code = str(movie.get('code from tt', '')).strip()
         sheet_code = raw_code.split('.')[0] if '.' in raw_code else raw_code
         
@@ -94,7 +95,7 @@ async def search_by_code(message: types.Message):
     if found_movie:
         link = found_movie.get('link to post', '').strip() if found_movie.get('link to post') else ""
         if not link:
-            link = "Ссылка скоро появится in нашем канале!"
+            link = "Ссылка скоро появится в нашем канале!"
             
         rating = format_rating(found_movie.get('rating_ball', '-'))
         
@@ -111,21 +112,32 @@ async def search_by_code(message: types.Message):
     else:
         await message.reply("😔 Фильм с таким кодом не найден. Проверь цифры!")
 
-async def handle_hc(request):
-    return web.Response(text="Bot is running")
+# Функция автоматической установки вебхука в Telegram при старте Render
+async def on_startup(bot: Bot) -> None:
+    RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
+    if RENDER_URL:
+        await bot.set_webhook(f"{RENDER_URL}/webhook")
+        logging.info(f"Вебхук успешно установлен на: {RENDER_URL}/webhook")
+    else:
+        logging.error("Переменная RENDER_EXTERNAL_URL не найдена. Проверьте настройки Render!")
 
-async def main():
-    app = web.Application()
-    app.router.add_get('/', handle_hc)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.getenv("PORT", 10000))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    asyncio.create_task(site.start())
+def main():
+    dp.startup.register(on_startup)
     
-    await dp.start_polling(bot)
+    app = web.Application()
+    
+    # Страница проверки доступности сервиса (Health Check)
+    app.router.add_get('/', lambda r: web.Response(text="Bot is running smoothly on Webhooks!"))
+    
+    # Регистрация обработчика входящих запросов от Telegram
+    webhook_requests_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot
+    )
+    webhook_requests_handler.register(app, path="/webhook")
+    
+    port = int(os.getenv("PORT", 10000))
+    web.run_app(app, host="0.0.0.0", port=port)
 
 if __name__ == '__main__':
-    asyncio.run(main())
-
-
+    main()
