@@ -2,7 +2,6 @@ import os
 import logging
 import random
 import requests
-import csv
 import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -10,38 +9,28 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiohttp import web
 
 API_TOKEN = os.getenv("BOT_TOKEN")
-GOOGLE_SHEET_ID = os.getenv("SHEET_ID")
+SCRIPT_URL = os.getenv("SCRIPT_URL")
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 def get_movies_from_sheet():
-    # Железобетонный формат экспорта первого листа
-    url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/export?format=csv&gid=0"
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers, timeout=10)
-        response.encoding = 'utf-8'
-        
-        # Очищаем текст от возможных мусорных символов Google
-        clean_text = response.text.strip().replace('\ufeff', '')
-        lines = clean_text.splitlines()
-        
-        # Фильтруем полностью пустые строки
-        lines = [line for line in lines if line.strip()]
-        
-        reader = csv.DictReader(lines)
-        return list(reader)
+        # Запрашиваем данные у официального скрипта Google
+        response = requests.get(SCRIPT_URL, timeout=10)
+        if response.status_code == 200:
+            return response.json()
+        return []
     except Exception as e:
-        logging.error(f"Ошибка чтения таблицы: {e}")
+        logging.error(f"Ошибка получения данных через веб-приложение: {e}")
         return []
 
-def format_rating(rating_str):
+def format_rating(rating_val):
     try:
-        return f"{float(rating_str):.1f}"
+        return f"{float(rating_val):.1f}"
     except:
-        return rating_str if rating_str else "-"
+        return str(rating_val) if rating_val else "-"
 
 @dp.message(Command("start"))
 async def send_welcome(message: types.Message):
@@ -94,8 +83,10 @@ async def search_by_code(message: types.Message):
 
     found_movie = None
     for movie in movies:
-        # Сравниваем коды, очищая их от случайных пробелов
-        sheet_code = movie.get('code from tt', '').strip() if movie.get('code from tt') else ""
+        # Безопасно преобразуем код из таблицы в текст и очищаем от возможных точек (.0) от Google
+        raw_code = str(movie.get('code from tt', '')).strip()
+        sheet_code = raw_code.split('.')[0] if '.' in raw_code else raw_code
+        
         if sheet_code == user_code:
             found_movie = movie
             break
@@ -103,7 +94,7 @@ async def search_by_code(message: types.Message):
     if found_movie:
         link = found_movie.get('link to post', '').strip() if found_movie.get('link to post') else ""
         if not link:
-            link = "Ссылка скоро появится в нашем канале!"
+            link = "Ссылка скоро появится in нашем канале!"
             
         rating = format_rating(found_movie.get('rating_ball', '-'))
         
@@ -136,4 +127,5 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
 
