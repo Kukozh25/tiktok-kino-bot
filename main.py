@@ -3,7 +3,10 @@ import logging
 import random
 import requests
 from aiogram import Bot, Dispatcher, types
-from aiogram.utils.executor import start_webhook
+from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.webhook.aiohttp_impl import SimpleRequestHandler
+from aiohttp import web
 
 # Получаем переменные окружения
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -11,7 +14,7 @@ SCRIPT_URL = os.getenv("SCRIPT_URL")
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher()
 
 def get_movies_from_sheet():
     try:
@@ -29,19 +32,19 @@ def format_rating(rating_val):
     except:
         return str(rating_val) if rating_val else "-"
 
-@dp.message_handler(commands=["start"])
+@dp.message(Command("start"))
 async def send_welcome(message: types.Message):
-    markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton(text="🎲 Случайный фильм", callback_data="get_random"))
+    builder = InlineKeyboardBuilder()
+    builder.row(types.InlineKeyboardButton(text="🎲 Случайный фильм", callback_data="get_random"))
     
     await message.reply(
         "Привет! 🍿 Добро пожаловать в кино-бота.\n\n"
         "Пришли мне **КОД фильма** из TikTok или нажми на кнопку ниже, чтобы выбрать случайное кино на вечер!👇",
-        reply_markup=markup,
+        reply_markup=builder.as_markup(),
         parse_mode="Markdown"
     )
 
-@dp.callback_query_handler(lambda c: c.data == 'get_random')
+@dp.callback_query(lambda c: c.data == 'get_random')
 async def process_callback_random(callback_query: types.CallbackQuery):
     await callback_query.answer()
     movies = get_movies_from_sheet()
@@ -67,7 +70,7 @@ async def process_callback_random(callback_query: types.CallbackQuery):
     )
     await bot.send_message(callback_query.from_user.id, text, parse_mode="Markdown")
 
-@dp.message_handler()
+@dp.message()
 async def search_by_code(message: types.Message):
     user_code = message.text.strip()
     if not user_code.isdigit():
@@ -107,27 +110,29 @@ async def search_by_code(message: types.Message):
     else:
         await message.reply("😔 Фильм с таким кодом не найден. Проверь цифры!")
 
-# Действия при запуске: принудительно очищаем старый вебхук и ставим новый
-async def on_startup(dispatcher):
+async def on_startup(bot: Bot) -> None:
     RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
     if RENDER_URL:
-        await bot.delete_webhook()  # Сброс старого соединения
-        await bot.set_webhook(f"{RENDER_URL}/webhook")
+        await bot.set_webhook(f"{RENDER_URL}/webhook", drop_pending_updates=True)
         logging.info(f"Вебхук успешно установлен на: {RENDER_URL}/webhook")
     else:
         logging.error("Переменная RENDER_EXTERNAL_URL не найдена.")
 
-async def on_shutdown(dispatcher):
-    await bot.delete_webhook()
+def main():
+    dp.startup.register(on_startup)
+    
+    app = web.Application()
+    
+    app.router.add_get('/', lambda r: web.Response(text="Bot is running smoothly on Webhooks!"))
+    
+    webhook_requests_handler = SimpleRequestHandler(
+        dispatcher=dp,
+        bot=bot
+    )
+    webhook_requests_handler.register(app, path="/webhook")
+    
+    port = int(os.getenv("PORT", 10000))
+    web.run_app(app, host="0.0.0.0", port=port)
 
 if __name__ == '__main__':
-    port = int(os.getenv("PORT", 10000))
-    start_webhook(
-        dispatcher=dp,
-        webhook_path='/webhook',
-        on_startup=on_startup,
-        on_shutdown=on_shutdown,
-        host='0.0.0.0',          # Слушаем все интерфейсы для Render
-        port=port,
-        skip_updates=True        # Очищает очередь сообщений, накопленных во время деплоя
-    )
+    main()
