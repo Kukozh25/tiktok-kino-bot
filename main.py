@@ -84,6 +84,8 @@ async def search_by_code(message: types.Message):
     found_movie = None
     for movie in movies:
         raw_code = str(movie.get('code from tt', '')).strip()
+        
+        # Перепроверено: корректно извлекаем строку до точки, если Google отдает число типа "123.0"
         sheet_code = raw_code.split('.')[0] if '.' in raw_code else raw_code
         
         if sheet_code == user_code:
@@ -110,21 +112,25 @@ async def search_by_code(message: types.Message):
     else:
         await message.reply("😔 Фильм с таким кодом не найден. Проверь цифры!")
 
+# Автоматическая привязка вебхука при каждом старте инстанса Render
 async def on_startup(bot: Bot) -> None:
     RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
     if RENDER_URL:
+        # drop_pending_updates=True сбрасывает очередь, чтобы старые копии бота не конфликтовали
         await bot.set_webhook(f"{RENDER_URL}/webhook", drop_pending_updates=True)
         logging.info(f"Вебхук успешно установлен на: {RENDER_URL}/webhook")
     else:
-        logging.error("Переменная RENDER_EXTERNAL_URL не найдена.")
+        logging.error("Переменная RENDER_EXTERNAL_URL не найдена. Проверьте настройки Render!")
 
 def main():
     dp.startup.register(on_startup)
     
     app = web.Application()
     
+    # Страница-хелсчек, которая всегда скажет Render, что приложение запущено успешно
     app.router.add_get('/', lambda r: web.Response(text="Bot is running smoothly on Webhooks!"))
     
+    # Обработчик вебхуков для приема сообщений от Telegram
     webhook_requests_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot
