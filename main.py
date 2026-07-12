@@ -2,8 +2,10 @@ import os
 import logging
 import random
 import requests
+import asyncio
 from aiogram import Bot, Dispatcher, types
-from aiogram.utils.executor import start_webhook
+from aiogram.utils import executor
+from aiohttp import web
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 SCRIPT_URL = os.getenv("SCRIPT_URL")
@@ -81,7 +83,6 @@ async def search_by_code(message: types.Message):
     for movie in movies:
         raw_code = str(movie.get('code from tt', '')).strip()
         
-        # Исправлено: корректно отсекаем .0 от гугл таблиц без создания багов
         if '.' in raw_code:
             sheet_code = raw_code.split('.')[0]
         else:
@@ -111,26 +112,26 @@ async def search_by_code(message: types.Message):
     else:
         await message.reply("😔 Фильм с таким кодом не найден. Проверь цифры!")
 
-async def on_startup(dispatcher):
-    RENDER_URL = os.getenv("RENDER_EXTERNAL_URL")
-    if RENDER_URL:
-        await bot.delete_webhook()
-        await bot.set_webhook(f"{RENDER_URL}/webhook")
-        logging.info(f"Вебхук успешно установлен на: {RENDER_URL}/webhook")
-    else:
-        logging.error("Переменная RENDER_EXTERNAL_URL не найдена.")
+# Маленький фоновый веб-сервер, чтобы Render не ругался на порты
+async def handle_hc(request):
+    return web.Response(text="Bot is perfectly alive")
 
-async def on_shutdown(dispatcher):
-    await bot.delete_webhook()
+async def start_background_server():
+    app = web.Application()
+    app.router.add_get('/', handle_hc)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 10000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
 
 if __name__ == '__main__':
-    port = int(os.getenv("PORT", 10000))
-    start_webhook(
-        dispatcher=dp,
-        webhook_path='/webhook',
-        on_startup=on_startup,
-        on_shutdown=on_shutdown,
-        host='0.0.0.0',
-        port=port,
-        skip_updates=True
-    )
+    # Запускаем фоновый веб-сервер для проверки портов Render
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(start_background_server())
+    
+    # Сбрасываем возможные старые зависшие вебхуки в Telegram перед стартом поллинга
+    loop.run_until_complete(bot.delete_webhook())
+    
+    # Запускаем стандартный опрос
+    executor.start_polling(dp, skip_updates=True)
